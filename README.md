@@ -9,13 +9,11 @@ A containerized service that automatically syncs birthdays from CardDAV to CalDA
 ## Features
 
 - **Automated Birthday Sync**: Fetches contacts from CardDAV and creates recurring birthday events in CalDAV
-- **Multi-Server Support**: Works with Nextcloud, Baikal, Radicale, SOGo, and other CardDAV/CalDAV servers
+- **Multi-Server Support**: Compatible with Nextcloud, Baikal, Radicale, SOGo, and other CardDAV/CalDAV servers
 - **Flexible Scheduling**: Cron-style scheduling or interval-based syncing
 - **Customizable Events**: Template-based event titles, descriptions, and reminders
-- **Robust Error Handling**: Graceful fallbacks and comprehensive logging
 - **Container-Native**: Built for Docker with health checks and graceful shutdown
 - **Multi-Architecture**: Supports AMD64 and ARM64 platforms
-- **Security-First**: Runs as non-root user with vulnerability scanning
 
 ## Quick Start
 
@@ -204,24 +202,6 @@ bdaysync/
 - **Scheduler Service**: Handles cron-style or interval-based scheduling
 - **Configuration Manager**: Validates environment and sets up logging
 
-## Health Monitoring
-
-The service includes comprehensive health checks:
-
-```bash
-# Docker health status
-docker inspect birthday-sync --format='{{.State.Health.Status}}'
-
-# Manual health check
-docker exec birthday-sync python bdaysync/main.py --health-check
-```
-
-Health checks verify:
-
-- Required environment variables
-- Python module imports
-- Optional connectivity testing
-
 ## Troubleshooting
 
 ### Debug Mode
@@ -273,14 +253,6 @@ docker-compose logs --tail=50 birthday-sync
 docker-compose logs birthday-sync | grep -i error
 ```
 
-## Security
-
-- **Non-root execution**: Container runs as dedicated user
-- **Minimal base image**: Uses Python slim for reduced attack surface
-- **Vulnerability scanning**: Automated security scans with Trivy
-- **Secure defaults**: No exposed ports, restricted permissions
-- **Environment isolation**: Credentials via environment variables only
-
 ## Multi-Architecture Support
 
 Images are built for multiple architectures:
@@ -288,23 +260,11 @@ Images are built for multiple architectures:
 - `linux/amd64` (Intel/AMD 64-bit)
 - `linux/arm64` (ARM 64-bit, Apple Silicon, Raspberry Pi 4+)
 
-## Automatic Updates
-
-Use Watchtower for automatic container updates:
-
-```yaml
-watchtower:
-  image: containrrr/watchtower
-  volumes:
-    - /var/run/docker.sock:/var/run/docker.sock
-  command: --interval 86400 --cleanup birthday-sync
-```
-
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
+3. Commit your changes using [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) (`git commit -m 'feat: added amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
@@ -318,11 +278,9 @@ cd bdaysync
 # Install development dependencies
 pip install -r requirements.txt
 
-# Run tests
-python -m pytest
+# Run the program
+python -m bdaysync/main.py
 
-# Run linting
-flake8 bdaysync/
 ```
 
 ## License
@@ -338,11 +296,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Acknowledgments
 
 - Built with [caldav](https://github.com/python-caldav/caldav) and [vobject](https://github.com/eventable/vobject) libraries
-- Inspired by the need for automated birthday reminders across CalDAV systems
-- Thanks to the open-source community for CardDAV/CalDAV protocol implementations
-
----
-
-**Latest Build**: ghcr.io/anatosun/bdaysync:latest
-
-<!-- Last updated: 2024-01-01 00:00:00 UTC -->
