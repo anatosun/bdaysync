@@ -1,0 +1,92 @@
+version: "3.8"
+
+services:
+  birthday-sync:
+    # Build locally
+    build: .
+    # Or use published image
+    # image: ghcr.io/your-username/your-repo:latest
+    container_name: birthday-sync
+    restart: unless-stopped
+
+    environment:
+      # CardDAV Configuration
+      CARDAV_SERVER_URL: "${CARDAV_SERVER_URL}"
+      CARDAV_USERNAME: "${CARDAV_USERNAME}"
+      CARDAV_PASSWORD: "${CARDAV_PASSWORD}"
+
+      # CalDAV Configuration
+      CALDAV_SERVER_URL: "${CALDAV_SERVER_URL}"
+      CALDAV_USERNAME: "${CALDAV_USERNAME}"
+      CALDAV_PASSWORD: "${CALDAV_PASSWORD}"
+
+      # Birthday Event Configuration
+      BIRTHDAY_EVENT_TITLE: "${BIRTHDAY_EVENT_TITLE:-🎂 {name}'s Birthday}"
+      BIRTHDAY_EVENT_DESCRIPTION: "${BIRTHDAY_EVENT_DESCRIPTION:-Birthday of {name}}"
+      BIRTHDAY_REMINDER_DAYS: "${BIRTHDAY_REMINDER_DAYS:-1,7}"
+      BIRTHDAY_REMINDER_MESSAGE: "${BIRTHDAY_REMINDER_MESSAGE:-Reminder: {name}'s birthday is in {days} days!}"
+      BIRTHDAY_EVENT_CATEGORY: "${BIRTHDAY_EVENT_CATEGORY:-Birthday}"
+      BIRTHDAY_UPDATE_EXISTING: "${BIRTHDAY_UPDATE_EXISTING:-true}"
+
+      # Scheduling Configuration
+      RUN_MODE: "${RUN_MODE:-daemon}" # Options: daemon, once
+      SYNC_SCHEDULE: "${SYNC_SCHEDULE:-0 6 * * *}" # Daily at 6 AM
+      DIAGNOSTIC_SCHEDULE: "${DIAGNOSTIC_SCHEDULE:-0 7 * * 0}" # Weekly on Sunday at 7 AM
+      SYNC_INTERVAL_HOURS: "${SYNC_INTERVAL_HOURS:-0}" # Alternative: sync every N hours (0 = use cron)
+
+      # Service Configuration
+      DEBUG: "${DEBUG:-false}"
+      TZ: "${TZ:-UTC}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      LOG_TO_FILE: "${LOG_TO_FILE:-false}"
+      STARTUP_DELAY: "${STARTUP_DELAY:-30}" # Seconds to wait before first sync
+
+      # Health Check Configuration
+      HEALTH_CHECK_CONNECTIVITY: "${HEALTH_CHECK_CONNECTIVITY:-false}"
+
+    volumes:
+      # Optional: Persist logs if LOG_TO_FILE=true
+      - birthday-logs:/var/log/birthday-sync
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+        reservations:
+          memory: 64M
+          cpus: "0.1"
+
+    # Health check (using the Python script itself)
+    healthcheck:
+      test: ["CMD", "python", "bdaysync/main.py", "--health-check"]
+      interval: 30m
+      timeout: 30s
+      retries: 3
+      start_period: 1m
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  birthday-logs:
+    driver: local
+# Optional: Add watchtower for automatic updates
+# services:
+#   watchtower:
+#     image: containrrr/watchtower
+#     container_name: birthday-sync-watchtower
+#     volumes:
+#       - /var/run/docker.sock:/var/run/docker.sock
+#     environment:
+#       - WATCHTOWER_POLL_INTERVAL=86400  # Check daily
+#       - WATCHTOWER_CLEANUP=true
+#       - WATCHTOWER_INCLUDE_STOPPED=true
+#       - WATCHTOWER_REVIVE_STOPPED=false
+#     command: birthday-sync
+#     restart: unless-stopped
