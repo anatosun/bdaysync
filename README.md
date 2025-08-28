@@ -4,7 +4,7 @@
 [![Docker Image](https://ghcr-badge.egpl.dev/anatosun/bdaysync/latest_by_date?trim=patch&label=latest)](https://github.com/anatosun/bdaysync/pkgs/container/bdaysync)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A containerized service that automatically syncs birthdays from CardDAV to CalDAV servers with built-in scheduling and elegant ASCII art interface.
+A containerized service that automatically syncs birthdays from CardDAV to CalDAV servers with built-in scheduling.
 
 ## Features
 
@@ -27,7 +27,7 @@ cp .env.template .env
 # Run with docker-compose
 docker-compose up -d
 
-# Check logs (includes ASCII art banner)
+# Check logs
 docker-compose logs -f birthday-sync
 ```
 
@@ -187,7 +187,7 @@ SYNC_INTERVAL_HOURS=6
 
 ```
 bdaysync/
-├── main.py              # Entry point with ASCII banner
+├── main.py              # Entry point
 ├── config.py            # Environment validation & logging
 ├── cardav_client.py     # CardDAV operations
 ├── caldav_client.py     # CalDAV operations
