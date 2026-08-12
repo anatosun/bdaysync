@@ -2,10 +2,10 @@
 CardDAV client for fetching contacts with birthdays
 """
 
-import re
 import logging
 from datetime import datetime
 from typing import List, Dict, Optional
+from xml.etree import ElementTree
 import vobject
 import requests
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class CardDAVClient:
     """Client for reading contacts from CardDAV server"""
-    
+
     def __init__(self, server_url: str, username: str, password: str):
         self.server_url = server_url.rstrip('/')
         self.username = username
@@ -37,9 +37,19 @@ class CardDAVClient:
         
         try:
             # Test Basic auth first
-            headers = {'Depth': '1'}
+            headers = {
+                'Content-Type': 'application/xml; charset=utf-8',
+                'Depth': '1',
+            }
+            propfind_body = '''<?xml version="1.0" encoding="utf-8"?>
+            <D:propfind xmlns:D="DAV:">
+                <D:prop>
+                    <D:resourcetype />
+                </D:prop>
+            </D:propfind>'''
             response = requests.request('PROPFIND', self.server_url, 
-                                      auth=self.basic_auth, headers=headers, timeout=10)
+                                      auth=self.basic_auth, headers=headers,
+                                      data=propfind_body, timeout=10)
             logger.info(f"Basic auth response: {response.status_code}")
             
             if response.status_code in [200, 207]:
@@ -49,7 +59,8 @@ class CardDAVClient:
                 # Try Digest auth
                 logger.info("Basic auth failed, trying Digest authentication...")
                 response = requests.request('PROPFIND', self.server_url, 
-                                          auth=self.digest_auth, headers=headers, timeout=10)
+                                          auth=self.digest_auth, headers=headers,
+                                          data=propfind_body, timeout=10)
                 logger.info(f"Digest auth response: {response.status_code}")
                 
                 if response.status_code in [200, 207]:
@@ -65,12 +76,7 @@ class CardDAVClient:
             self.addressbook_urls = self._extract_addressbooks(response.text)
             
             if not self.addressbook_urls:
-                # If no addressbooks found, maybe this URL IS an addressbook
-                if self._is_addressbook(response.text):
-                    logger.info("Provided URL appears to be a single addressbook")
-                    self.addressbook_urls = [self.server_url]
-                else:
-                    raise Exception("No addressbooks found at the provided URL")
+                raise Exception("No addressbooks found at the provided URL")
             
             logger.info(f"Discovered {len(self.addressbook_urls)} addressbooks:")
             for ab_url in self.addressbook_urls:
@@ -85,40 +91,46 @@ class CardDAVClient:
     
     def _extract_addressbooks(self, xml_response: str) -> List[str]:
         """Extract addressbook collection URLs from PROPFIND response"""
+        return self._find_addressbooks(xml_response)
+
+    def _find_addressbooks(self, xml_response: str) -> List[str]:
+        """Find CardDAV addressbook collections in a DAV multistatus response."""
+        dav_namespace = 'DAV:'
+        carddav_namespace = 'urn:ietf:params:xml:ns:carddav'
+
+        try:
+            root = ElementTree.fromstring(xml_response)
+        except ElementTree.ParseError as error:
+            logger.warning(f"Could not parse CardDAV discovery XML: {error}")
+            return []
+
         addressbooks = []
-        
-        # Find all response blocks
-        response_pattern = r'<d:response[^>]*>(.*?)</d:response>'
-        responses = re.findall(response_pattern, xml_response, re.DOTALL | re.IGNORECASE)
-        
-        for response_block in responses:
-            # Extract href from this response block
-            href_match = re.search(r'<d:href[^>]*>([^<]+)</d:href>', response_block, re.IGNORECASE)
-            if not href_match:
+        for response in root.findall(f'{{{dav_namespace}}}response'):
+            href = response.findtext(f'{{{dav_namespace}}}href')
+            if not href:
                 continue
-                
-            href = href_match.group(1).strip()
+
+            has_addressbook_type = False
+            for propstat in response.findall(f'{{{dav_namespace}}}propstat'):
+                status = propstat.findtext(f'{{{dav_namespace}}}status', '')
+                if not status.startswith('HTTP/') or ' 2' not in status:
+                    continue
+
+                resource_type = propstat.find(f'{{{dav_namespace}}}prop/{{{dav_namespace}}}resourcetype')
+                if resource_type is not None and resource_type.find(f'{{{carddav_namespace}}}addressbook') is not None:
+                    has_addressbook_type = True
+                    break
+
+            href = href.strip()
             logger.debug(f"Found href: {href}")
-            
-            # Check if this response contains addressbook resourcetype
-            if ('card:addressbook' in response_block or 
-                'addressbook' in response_block.lower() and 
-                '<d:collection' in response_block):
-                
-                # Skip the parent directory itself
-                if href != self.server_url and href != self.server_url + '/':
-                    full_url = self._resolve_url(href)
+            if has_addressbook_type:
+                full_url = self._resolve_url(href)
+                if full_url not in addressbooks:
                     addressbooks.append(full_url)
                     logger.debug(f"Found addressbook: {full_url}")
-        
+
         return addressbooks
-    
-    def _is_addressbook(self, xml_response: str) -> bool:
-        """Check if the response indicates this URL is an addressbook collection"""
-        return ('card:addressbook' in xml_response or 
-                ('addressbook' in xml_response.lower() and 
-                 '<d:collection' in xml_response))
-    
+
     def get_contacts(self) -> List[Dict]:
         """Fetch all contacts from all discovered addressbooks"""
         all_contacts = []
@@ -146,9 +158,7 @@ class CardDAVClient:
             propfind_body = '''<?xml version="1.0" encoding="utf-8" ?>
             <D:propfind xmlns:D="DAV:">
                 <D:prop>
-                    <D:getetag />
                     <D:getcontenttype />
-                    <D:resourcetype />
                 </D:prop>
             </D:propfind>'''
             
@@ -206,38 +216,24 @@ class CardDAVClient:
     
     def _extract_vcard_urls(self, xml_response: str) -> List[str]:
         """Extract vCard URLs from PROPFIND response"""
+        dav_namespace = 'DAV:'
+
+        try:
+            root = ElementTree.fromstring(xml_response)
+        except ElementTree.ParseError as error:
+            logger.warning(f"Could not parse vCard discovery XML: {error}")
+            return []
+
         urls = []
-        
-        # Find all href elements containing .vcf files
-        vcf_pattern = r'<d:href[^>]*>([^<]*\.vcf)</d:href>'
-        vcf_matches = re.findall(vcf_pattern, xml_response, re.IGNORECASE)
-        
-        for url in vcf_matches:
-            url = url.strip()
-            if url:
-                urls.append(url)
-                logger.debug(f"Found vCard URL: {url}")
-        
-        # Also try a more general pattern for any vcard content type
-        href_pattern = r'<d:href[^>]*>([^<]+)</d:href>'
-        content_type_pattern = r'<d:getcontenttype[^>]*>([^<]*vcard[^<]*)</d:getcontenttype>'
-        
-        href_matches = re.findall(href_pattern, xml_response, re.IGNORECASE)
-        content_matches = re.findall(content_type_pattern, xml_response, re.IGNORECASE)
-        
-        # If we found content type matches, try to match them with hrefs
-        if content_matches and not urls:
-            for href in href_matches:
-                href = href.strip()
-                if not href.endswith('/') and not href.endswith('.vcf'):
-                    # Check if this href appears near a vcard content type
-                    href_index = xml_response.find(f'<d:href>{href}</d:href>')
-                    if href_index > 0:
-                        # Look for vcard content type within 500 chars after href
-                        nearby_text = xml_response[href_index:href_index + 500]
-                        if 'vcard' in nearby_text.lower():
-                            urls.append(href)
-                            logger.debug(f"Found vCard URL by content type: {href}")
+        for response in root.findall(f'{{{dav_namespace}}}response'):
+            href = response.findtext(f'{{{dav_namespace}}}href')
+            content_type = response.findtext(
+                f'{{{dav_namespace}}}propstat/{{{dav_namespace}}}prop/'
+                f'{{{dav_namespace}}}getcontenttype'
+            )
+            if href and content_type and 'vcard' in content_type.lower():
+                urls.append(href.strip())
+                logger.debug(f"Found vCard URL: {href.strip()}")
         
         logger.info(f"Extracted {len(urls)} vCard URLs")
         return urls
