@@ -81,7 +81,8 @@ def get_birthday_config():
         'reminder_days_str': os.getenv('BIRTHDAY_REMINDER_DAYS', '1'),
         'reminder_template': os.getenv('BIRTHDAY_REMINDER_MESSAGE', 'Reminder: {name}\'s birthday is in {days} days!'),
         'event_category': os.getenv('BIRTHDAY_EVENT_CATEGORY', 'Birthday'),
-        'update_existing': os.getenv('BIRTHDAY_UPDATE_EXISTING', 'true').lower() == 'true'
+        'update_existing': os.getenv('BIRTHDAY_UPDATE_EXISTING', 'true').lower() == 'true',
+        'delete_orphans': os.getenv('BIRTHDAY_DELETE_ORPHANS', 'false').lower() == 'true'
     }
 
 def get_scheduler_config():

@@ -3,13 +3,21 @@ CalDAV client for creating birthday events
 """
 
 import logging
+import re
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 import vobject
 import caldav
 from config import get_birthday_config
 
 logger = logging.getLogger(__name__)
+
+BIRTHDAY_UID_RE = re.compile(r'^birthday-(.+)-\d{4}(\d{4})$')
+
+
+def birthday_slug(name: str) -> str:
+    """Name part of a birthday event UID: birthday-{slug}-{YYYYMMDD}"""
+    return name.replace(' ', '-').lower()
 
 class CalDAVClient:
     """Client for creating events in CalDAV server"""
@@ -55,6 +63,7 @@ class CalDAVClient:
         self.reminder_template = config['reminder_template']
         self.event_category = config['event_category']
         self.update_existing = config['update_existing']
+        self.delete_orphans_enabled = config['delete_orphans']
         
         logger.info("Birthday event configuration:")
         logger.info(f"  Title template: {self.event_title_template}")
@@ -63,6 +72,7 @@ class CalDAVClient:
         logger.info(f"  Reminder message: {self.reminder_template}")
         logger.info(f"  Category: {self.event_category}")
         logger.info(f"  Update existing: {self.update_existing}")
+        logger.info(f"  Delete orphans: {self.delete_orphans_enabled}")
     
     def create_birthday_event(self, contact: Dict, year: int = None) -> bool:
         """Create a birthday event for a contact"""
@@ -90,7 +100,7 @@ class CalDAVClient:
                     return False
             
             # Create unique UID
-            event_uid = f"birthday-{name.replace(' ', '-').lower()}-{event_date.strftime('%Y%m%d')}"
+            event_uid = f"birthday-{birthday_slug(name)}-{event_date.strftime('%Y%m%d')}"
             
             # Create iCalendar event
             cal = vobject.iCalendar()
@@ -164,6 +174,30 @@ class CalDAVClient:
             else:
                 return f"{name}'s birthday is in {days_before} days!"
     
+    def delete_orphans(self, contacts: List[Dict]) -> int:
+        """Delete birthday-* events whose name and month/day match no current contact."""
+        wanted = {(birthday_slug(c['name']), c['birthday'].strftime('%m%d')) for c in contacts}
+
+        deleted = 0
+        for ev in self.calendar.events():
+            try:
+                parsed = vobject.readOne(ev.data)
+                if not hasattr(parsed, 'vevent') or not hasattr(parsed.vevent, 'uid'):
+                    continue
+                uid = parsed.vevent.uid.value
+                match = BIRTHDAY_UID_RE.match(uid)
+                if not match:
+                    continue
+                if match.groups() in wanted:
+                    continue
+                logger.info(f"Deleting orphan birthday event: {uid}")
+                ev.delete()
+                deleted += 1
+            except Exception as e:
+                logger.warning(f"Error while considering event for orphan delete: {e}")
+                continue
+        return deleted
+
     def _find_existing_event(self, name: str, date) -> Optional:
         """Find existing birthday event for a contact"""
         try:
@@ -197,7 +231,7 @@ class CalDAVClient:
                         # Also check by UID pattern
                         if hasattr(cal.vevent, 'uid'):
                             uid = cal.vevent.uid.value
-                            expected_uid = f"birthday-{name.replace(' ', '-').lower()}"
+                            expected_uid = f"birthday-{birthday_slug(name)}"
                             if uid.startswith(expected_uid):
                                 return event
                 except Exception as e:
@@ -222,7 +256,7 @@ class CalDAVClient:
                                 return event
                             if hasattr(cal.vevent, 'uid'):
                                 uid = cal.vevent.uid.value
-                                expected_uid = f"birthday-{name.replace(' ', '-').lower()}"
+                                expected_uid = f"birthday-{birthday_slug(name)}"
                                 if uid.startswith(expected_uid):
                                     return event
                     except Exception as e:

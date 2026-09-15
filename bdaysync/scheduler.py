@@ -27,6 +27,7 @@ class SchedulerService:
         self.startup_delay = config['startup_delay']
         
         self.last_sync = None
+        self.last_schedule_check = datetime.now()
         
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -54,13 +55,12 @@ class SchedulerService:
             return True
         return datetime.now() - self.last_sync >= timedelta(hours=self.sync_interval_hours)
     
-    def _should_sync_cron(self, schedule):
+    def _should_sync_cron(self, schedule, last_check, now):
         """Check if we should sync based on cron schedule"""
         try:
-            cron = croniter(schedule, datetime.now() - timedelta(minutes=1))
-            next_time = cron.get_next(datetime)
-            return next_time <= datetime.now()
-        except:
+            return croniter(schedule, last_check).get_next(datetime) <= now
+        except Exception as e:
+            logger.error(f"Invalid cron schedule '{schedule}': {e}")
             return False
     
     def _perform_sync(self, diagnostic=False):
@@ -105,7 +105,8 @@ class SchedulerService:
                 'sync_schedule': self.sync_schedule,
                 'diagnostic_schedule': self.diagnostic_schedule
             }
-        except:
+        except Exception as e:
+            logger.error(f"Could not calculate the next scheduled run: {e}")
             return None
     
     def run_daemon(self):
@@ -141,6 +142,7 @@ class SchedulerService:
         while self.running:
             try:
                 loop_count += 1
+                now = datetime.now()
                 
                 # Check if it's time for a sync
                 sync_needed = False
@@ -149,9 +151,14 @@ class SchedulerService:
                 if self.sync_interval_hours > 0:
                     sync_needed = self._should_sync_interval()
                 else:
-                    sync_needed = self._should_sync_cron(self.sync_schedule)
+                    sync_needed = self._should_sync_cron(
+                        self.sync_schedule, self.last_schedule_check, now
+                    )
                 
-                diagnostic_needed = self._should_sync_cron(self.diagnostic_schedule)
+                diagnostic_needed = self._should_sync_cron(
+                    self.diagnostic_schedule, self.last_schedule_check, now
+                )
+                self.last_schedule_check = now
                 
                 if diagnostic_needed:
                     self._perform_sync(diagnostic=True)
@@ -173,9 +180,3 @@ class SchedulerService:
                 self._wait_with_interrupt_check(60)
         
         logger.info("Scheduler daemon stopped")
-    
-    def run_once(self):
-        """Run sync once and exit"""
-        logger.info("Running single sync operation...")
-        success = self._perform_sync()
-        return 0 if success else 1
