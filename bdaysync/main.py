@@ -116,6 +116,14 @@ def main_sync():
                 created_count += 1
         
         logger.info(f"Successfully created {created_count} birthday events")
+
+        if caldav_client.delete_orphans_enabled:
+            if cardav_client.fetch_complete:
+                deleted = caldav_client.delete_orphans(contacts)
+                logger.info(f"Deleted {deleted} orphan birthday events")
+            else:
+                logger.warning("Incomplete CardDAV fetch; skipping orphan delete")
+
         return True
         
     except Exception as e:

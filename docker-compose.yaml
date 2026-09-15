@@ -25,6 +25,7 @@ services:
       BIRTHDAY_REMINDER_MESSAGE: "${BIRTHDAY_REMINDER_MESSAGE:-Reminder: {name}'s birthday is in {days} days!}"
       BIRTHDAY_EVENT_CATEGORY: "${BIRTHDAY_EVENT_CATEGORY:-Birthday}"
       BIRTHDAY_UPDATE_EXISTING: "${BIRTHDAY_UPDATE_EXISTING:-true}"
+      BIRTHDAY_DELETE_ORPHANS: "${BIRTHDAY_DELETE_ORPHANS:-false}"
 
       # Scheduling Configuration
       RUN_MODE: "${RUN_MODE:-daemon}" # Options: daemon, once
