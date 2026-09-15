@@ -2,14 +2,34 @@
 CalDAV client for creating birthday events
 """
 
+import calendar
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Optional
+import re
+from datetime import date, datetime, timedelta
+from typing import Dict, List, Optional
 import vobject
 import caldav
 from config import get_birthday_config
 
 logger = logging.getLogger(__name__)
+
+BIRTHDAY_UID_RE = re.compile(r'^birthday-(.+)-\d{4}(\d{4})$')
+
+
+def birthday_slug(name: str) -> str:
+    """Name part of a birthday event UID: birthday-{slug}-{YYYYMMDD}"""
+    return name.replace(' ', '-').lower()
+
+
+def is_leap_day(birthday: date) -> bool:
+    return (birthday.month, birthday.day) == (2, 29)
+
+
+def birthday_in_year(birthday: date, year: int) -> date:
+    """Birthday in the given year; 29 February falls on 28 February in common years."""
+    if is_leap_day(birthday) and not calendar.isleap(year):
+        return birthday.replace(year=year, day=28)
+    return birthday.replace(year=year)
 
 class CalDAVClient:
     """Client for creating events in CalDAV server"""
@@ -55,6 +75,7 @@ class CalDAVClient:
         self.reminder_template = config['reminder_template']
         self.event_category = config['event_category']
         self.update_existing = config['update_existing']
+        self.delete_orphans_enabled = config['delete_orphans']
         
         logger.info("Birthday event configuration:")
         logger.info(f"  Title template: {self.event_title_template}")
@@ -63,6 +84,7 @@ class CalDAVClient:
         logger.info(f"  Reminder message: {self.reminder_template}")
         logger.info(f"  Category: {self.event_category}")
         logger.info(f"  Update existing: {self.update_existing}")
+        logger.info(f"  Delete orphans: {self.delete_orphans_enabled}")
     
     def create_birthday_event(self, contact: Dict, year: int = None) -> bool:
         """Create a birthday event for a contact"""
@@ -74,7 +96,7 @@ class CalDAVClient:
             name = contact['name']
             
             # Create event date for this year
-            event_date = birthday.replace(year=year)
+            event_date = birthday_in_year(birthday, year)
             
             # Generate event details from templates
             event_title = self.event_title_template.format(name=name)
@@ -90,7 +112,8 @@ class CalDAVClient:
                     return False
             
             # Create unique UID
-            event_uid = f"birthday-{name.replace(' ', '-').lower()}-{event_date.strftime('%Y%m%d')}"
+            # Month/day from the contact, so orphan delete still matches a moved 29 February
+            event_uid = f"birthday-{birthday_slug(name)}-{year}{birthday.strftime('%m%d')}"
             
             # Create iCalendar event
             cal = vobject.iCalendar()
@@ -109,7 +132,8 @@ class CalDAVClient:
             event.dtend.params['VALUE'] = 'DATE'
             
             # Add yearly recurrence
-            event.add('rrule').value = 'FREQ=YEARLY'
+            # Plain FREQ=YEARLY would skip 29 February in common years (RFC 5545)
+            event.add('rrule').value = 'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1' if is_leap_day(birthday) else 'FREQ=YEARLY'
             
             # Add reminders
             for days_before in self.reminder_days:
@@ -164,6 +188,40 @@ class CalDAVClient:
             else:
                 return f"{name}'s birthday is in {days_before} days!"
     
+    def delete_orphans(self, contacts: List[Dict]) -> int:
+        """Delete birthday-* events whose name and month/day match no current contact."""
+        wanted = {(birthday_slug(c['name']), c['birthday'].strftime('%m%d')) for c in contacts}
+
+        deleted = 0
+        for ev in self.calendar.events():
+            try:
+                parsed = vobject.readOne(ev.data)
+                if not hasattr(parsed, 'vevent') or not hasattr(parsed.vevent, 'uid'):
+                    continue
+                uid = parsed.vevent.uid.value
+                match = BIRTHDAY_UID_RE.match(uid)
+                if not match:
+                    continue
+                if match.groups() in wanted:
+                    continue
+                logger.info(f"Deleting orphan birthday event: {uid}")
+                ev.delete()
+                deleted += 1
+            except Exception as e:
+                logger.warning(f"Error while considering event for orphan delete: {e}")
+                continue
+        return deleted
+
+    def _is_event_for(self, vevent, name: str) -> bool:
+        """Exact match only: 'Anna' must not claim the event of 'Anna Maria'."""
+        if hasattr(vevent, 'uid'):
+            match = BIRTHDAY_UID_RE.match(vevent.uid.value)
+            if match:
+                # Our own event: the UID alone decides
+                return match.group(1) == birthday_slug(name)
+        # Event from elsewhere: adopt it only if the title is exactly ours
+        return hasattr(vevent, 'summary') and vevent.summary.value == self.event_title_template.format(name=name)
+
     def _find_existing_event(self, name: str, date) -> Optional:
         """Find existing birthday event for a contact"""
         try:
@@ -188,18 +246,8 @@ class CalDAVClient:
             
             for event in events:
                 try:
-                    cal = vobject.readOne(event.data)
-                    if hasattr(cal.vevent, 'summary'):
-                        summary = cal.vevent.summary.value
-                        # Check if this event is for this person (name appears in summary)
-                        if name in summary and (self.event_category.lower() in summary.lower() or 'birthday' in summary.lower()):
-                            return event
-                        # Also check by UID pattern
-                        if hasattr(cal.vevent, 'uid'):
-                            uid = cal.vevent.uid.value
-                            expected_uid = f"birthday-{name.replace(' ', '-').lower()}"
-                            if uid.startswith(expected_uid):
-                                return event
+                    if self._is_event_for(vobject.readOne(event.data).vevent, name):
+                        return event
                 except Exception as e:
                     logger.debug(f"Error parsing existing event: {e}")
                     continue
@@ -215,16 +263,8 @@ class CalDAVClient:
                 
                 for event in events:
                     try:
-                        cal = vobject.readOne(event.data)
-                        if hasattr(cal.vevent, 'summary'):
-                            summary = cal.vevent.summary.value
-                            if name in summary and (self.event_category.lower() in summary.lower() or 'birthday' in summary.lower()):
-                                return event
-                            if hasattr(cal.vevent, 'uid'):
-                                uid = cal.vevent.uid.value
-                                expected_uid = f"birthday-{name.replace(' ', '-').lower()}"
-                                if uid.startswith(expected_uid):
-                                    return event
+                        if self._is_event_for(vobject.readOne(event.data).vevent, name):
+                            return event
                     except Exception as e:
                         logger.debug(f"Error parsing existing event in fallback: {e}")
                         continue
@@ -238,7 +278,7 @@ class CalDAVClient:
         """Update an existing birthday event with new templates"""
         try:
             name = contact['name']
-            event_date = contact['birthday'].replace(year=year)
+            event_date = birthday_in_year(contact['birthday'], year)
             
             # Parse existing event
             cal = vobject.readOne(existing_event.data)

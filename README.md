@@ -73,6 +73,7 @@ docker-compose up -d
 | `BIRTHDAY_REMINDER_MESSAGE`  | `Reminder: {name}'s birthday is in {days} days!` | Reminder message template       |
 | `BIRTHDAY_EVENT_CATEGORY`    | `Birthday`                                       | Event category                  |
 | `BIRTHDAY_UPDATE_EXISTING`   | `true`                                           | Update existing events          |
+| `BIRTHDAY_DELETE_ORPHANS`    | `false`                                          | Delete orphaned events          |
 
 ### Logging & Debug
 
